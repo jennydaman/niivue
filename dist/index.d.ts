@@ -192,7 +192,9 @@ declare enum ImageType {
     V16 = 13,
     VMR = 14,
     HEAD = 15,
-    DCM_FOLDER = 16
+    DCM_FOLDER = 16,
+    SRC = 17,
+    FIB = 18
 }
 type ImageFromUrlOptions = {
     url: string;
@@ -209,6 +211,7 @@ type ImageFromUrlOptions = {
     useQFormNotSForm?: boolean;
     alphaThreshold?: boolean;
     colormapNegative?: string;
+    colorMapNegative?: string;
     cal_minNeg?: number;
     cal_maxNeg?: number;
     colorbarVisible?: boolean;
@@ -323,6 +326,7 @@ declare class NVImage {
     imageType?: ImageType;
     img?: TypedVoxelArray;
     imaginary?: Float32Array;
+    v1?: Float32Array;
     fileObject?: File | File[];
     dims?: number[];
     onColormapChange: (img: NVImage) => void;
@@ -369,6 +373,8 @@ declare class NVImage {
      */
     constructor(dataBuffer?: ArrayBuffer | ArrayBuffer[] | null, name?: string, colormap?: string, opacity?: number, pairedImgData?: ArrayBuffer | null, cal_min?: number, cal_max?: number, trustCalMinMax?: boolean, percentileFrac?: number, ignoreZeroVoxels?: boolean, useQFormNotSForm?: boolean, colormapNegative?: string, frame4D?: number, imageType?: ImageType, cal_minNeg?: number, cal_maxNeg?: number, colorbarVisible?: boolean, colormapLabel?: LUT | null);
     computeObliqueAngle(mtx44: mat4): number;
+    float32V1asRGBA(inImg: Float32Array): Uint8Array;
+    loadImgV1(isFlipX?: boolean, isFlipY?: boolean, isFlipZ?: boolean): boolean;
     calculateOblique(): void;
     THD_daxes_to_NIFTI(xyzDelta: number[], xyzOrigin: number[], orientSpecific: number[]): void;
     SetPixDimFromSForm(): void;
@@ -377,6 +383,8 @@ declare class NVImage {
     readV16(buffer: ArrayBuffer): ArrayBuffer;
     readVMR(buffer: ArrayBuffer): ArrayBuffer;
     readMGH(buffer: ArrayBuffer): ArrayBuffer;
+    readFIB(buffer: ArrayBuffer): [ArrayBuffer, Float32Array];
+    readSRC(buffer: ArrayBuffer): ArrayBuffer;
     readHEAD(dataBuffer: ArrayBuffer, pairedImgData: ArrayBuffer | null): ArrayBuffer;
     readMHA(buffer: ArrayBuffer, pairedImgData: ArrayBuffer | null): ArrayBuffer;
     readMIF(buffer: ArrayBuffer, pairedImgData: ArrayBuffer | null): ArrayBuffer;
@@ -429,7 +437,7 @@ declare class NVImage {
      * read a 3D slab of voxels from a volume
      * @param voxStart - first row, column and slice (RAS order) for selection
      * @param voxEnd - final row, column and slice (RAS order) for selection
-     * @param dataType - array data type. Options: 'same' (default), 'uint8', 'float32'
+     * @param dataType - array data type. Options: 'same' (default), 'uint8', 'float32', 'scaled', 'normalized', 'windowed'
      * @returns the an array where ret[0] is the voxel values and ret[1] is dimension of selection
      * @see {@link https://niivue.github.io/niivue/features/slab_selection.html | live demo usage}
      */
@@ -551,6 +559,11 @@ declare enum SLICE_TYPE {
     MULTIPLANAR = 3,
     RENDER = 4
 }
+declare enum SHOW_RENDER {
+    NEVER = 0,
+    ALWAYS = 1,
+    AUTO = 2
+}
 /**
  * Multi-planar layout
  * @ignore
@@ -588,6 +601,9 @@ type NVConfigOptions = {
     fontColor: Float32List;
     selectionBoxColor: number[];
     clipPlaneColor: number[];
+    clipThick: number;
+    clipVolumeLow: number[];
+    clipVolumeHigh: number[];
     rulerColor: number[];
     colorbarMargin: number;
     trustCalMinMax: boolean;
@@ -603,6 +619,7 @@ type NVConfigOptions = {
     isOrientCube: boolean;
     multiplanarPadPixels: number;
     multiplanarForceRender: boolean;
+    multiplanarShowRender: SHOW_RENDER;
     isRadiologicalConvention: boolean;
     meshThicknessOn2D: number | string;
     dragMode: DRAG_MODE;
@@ -635,6 +652,11 @@ type NVConfigOptions = {
     multiplanarLayout: MULTIPLANAR_TYPE;
     renderOverlayBlend: number;
     sliceMosaicString: string;
+    centerMosaic: boolean;
+    clickToSegment: boolean;
+    clickToSegmentRadius: number;
+    clickToSegmentSteps: number;
+    clickToSegmentBright: boolean;
 };
 declare const DEFAULT_OPTIONS: NVConfigOptions;
 type SceneData = {
@@ -645,6 +667,9 @@ type SceneData = {
     clipPlaneDepthAziElev: number[];
     volScaleMultiplier: number;
     pan2Dxyzmm: vec4;
+    clipThick: number;
+    clipVolumeLow: number[];
+    clipVolumeHigh: number[];
 };
 declare const INITIAL_SCENE_DATA: {
     azimuth: number;
@@ -654,6 +679,9 @@ declare const INITIAL_SCENE_DATA: {
     clipPlaneDepthAziElev: number[];
     volScaleMultiplier: number;
     pan2Dxyzmm: vec4;
+    clipThick: number;
+    clipVolumeLow: number[];
+    clipVolumeHigh: number[];
 };
 type Scene = {
     onAzimuthElevationChange: (azimuth: number, elevation: number) => void;
@@ -914,6 +942,22 @@ type DragReleaseParams = {
     tileIdx: number;
     axCorSag: SLICE_TYPE;
 };
+type NiiVueLocationValue = {
+    id: string;
+    mm: vec4;
+    name: string;
+    value: number;
+    vox: vec3;
+};
+type NiiVueLocation = {
+    axCorSag: number;
+    frac: vec3;
+    mm: vec4;
+    string: string;
+    values: NiiVueLocationValue[];
+    vox: vec3;
+    xy: [number, number];
+};
 
 type ValuesArray = Array<{
     id: string;
@@ -923,8 +967,7 @@ type ValuesArray = Array<{
     cal_min?: number;
     cal_max?: number;
 }>;
-type TypedNumberArray = Float64Array | Float32Array | Uint32Array | Uint16Array | Uint8Array | Int32Array | Int16Array | Int8Array;
-type AnyNumberArray = number[] | TypedNumberArray;
+type AnyNumberArray = number[] | Float64Array | Float32Array | Uint32Array | Uint16Array | Uint8Array | Int32Array | Int16Array | Int8Array;
 type DefaultMeshType = {
     positions: Float32Array;
     indices: Uint32Array;
@@ -1093,11 +1136,13 @@ declare class NVMesh {
     rgba255: Uint8Array;
     fiberLength?: number;
     fiberLengths?: Uint32Array;
+    fiberDensity?: Float32Array;
     fiberDither: number;
     fiberColor: string;
     fiberDecimationStride: number;
     fiberSides: number;
     fiberRadius: number;
+    fiberOcclusion: number;
     f32PerVertex: number;
     fiberMask?: unknown[];
     colormap?: ColorMap | LegacyConnectome | string | null;
@@ -1140,10 +1185,15 @@ declare class NVMesh {
     constructor(pts: Float32Array, tris: Uint32Array, name: string, rgba255: Uint8Array, opacity: number, visible: boolean, gl: WebGL2RenderingContext, connectome?: LegacyConnectome | string | null, dpg?: ValuesArray | null, dps?: ValuesArray | null, dpv?: ValuesArray | null, colorbarVisible?: boolean, anatomicalStructurePrimary?: string);
     initValuesArray(va: ValuesArray): ValuesArray;
     linesToCylinders(gl: WebGL2RenderingContext, posClrF32: Float32Array, indices: number[]): void;
+    createFiberDensityMap(): void;
     updateFibers(gl: WebGL2RenderingContext): void;
     indexNearestXYZmm(Xmm: number, Ymm: number, Zmm: number): number[];
+    unloadMesh(gl: WebGL2RenderingContext): void;
     updateMesh(gl: WebGL2RenderingContext): void;
     reverseFaces(gl: WebGL2RenderingContext): void;
+    hierarchicalOrder(): number;
+    decimateFaces(n: number, ntarget: number): void;
+    decimateHierarchicalMesh(gl: WebGL2RenderingContext, order?: number): boolean;
     setLayerProperty(id: number, key: keyof NVMeshLayer, val: number | string | boolean, gl: WebGL2RenderingContext): void;
     setProperty(key: keyof this, val: unknown, gl: WebGL2RenderingContext): void;
     generatePosNormClr(pts: Float32Array, tris: Uint32Array, rgba255: Uint8Array): Float32Array;
@@ -1402,12 +1452,14 @@ declare class NVController {
     onMeshPropertyChanged(meshIndex: number, key: string, val: unknown): void;
 }
 
+type TypedNumberArray = Float64Array | Float32Array | Uint32Array | Uint16Array | Uint8Array | Int32Array | Int16Array | Int8Array;
 /**
  * Namespace for utility functions
  * @ignore
  */
 declare class NVUtilities {
     static arrayBufferToBase64(arrayBuffer: ArrayBuffer): string;
+    static readMatV4(buffer: ArrayBuffer): Record<string, TypedNumberArray>;
     static uint8tob64(bytes: Uint8Array): string;
     static download(content: string | ArrayBuffer, fileName: string, contentType: string): void;
     static readFileAsync(file: Blob): Promise<ArrayBuffer>;
@@ -1471,11 +1523,32 @@ declare class NVMeshLoaders {
     static readSRF(buffer: ArrayBuffer): DefaultMeshType;
     static readTxtSTL(buffer: ArrayBuffer): DefaultMeshType;
     static readSTL(buffer: ArrayBuffer): DefaultMeshType;
+    static decimateLayerVertices(nVertLayer: number, nVertMesh: number): number;
     static readNII2(buffer: ArrayBuffer, n_vert?: number, anatomicalStructurePrimary?: string): Int32Array | Float32Array | Int16Array | Uint8Array;
     static readNII(buffer: ArrayBuffer, n_vert?: number, anatomicalStructurePrimary?: string): Float32Array | Uint8Array | Int32Array | Int16Array;
     static readMGH(buffer: ArrayBuffer, n_vert?: number, isReadColortables?: boolean): MGH;
     static readX3D(buffer: ArrayBuffer): X3D;
     static readGII(buffer: ArrayBuffer, n_vert?: number): GII;
+}
+
+type Extents = {
+    mxDx: number;
+    extentsMin: number | number[];
+    extentsMax: number | number[];
+};
+/**
+ * Utilities class for common mesh functions
+ */
+declare class NVMeshUtilities {
+    static getClusterBoundaryU8(u8: Uint8Array, faces: number[] | Uint32Array): boolean[];
+    static createMZ3(vertices: Float32Array, indices: Uint32Array, compress?: boolean): ArrayBuffer;
+    static createOBJ(vertices: Float32Array, indices: Uint32Array): ArrayBuffer;
+    static createSTL(vertices: Float32Array, indices: Uint32Array): ArrayBuffer;
+    static downloadArrayBuffer(buffer: ArrayBuffer, filename: string): void;
+    static saveMesh(vertices: Float32Array, indices: Uint32Array, filename?: string, compress?: boolean): ArrayBuffer;
+    static getClusterBoundary(rgba8: Uint8Array, faces: number[] | Uint32Array): boolean[];
+    static getExtents(pts: number[] | Float32Array): Extents;
+    static generateNormals(pts: number[] | Float32Array, tris: number[] | Uint32Array): Float32Array;
 }
 
 type ColormapListEntry = {
@@ -1735,6 +1808,19 @@ declare class Niivue {
      * }
      */
     onIntensityChange: (volume: NVImage) => void;
+    /**
+     * callback function when clickToSegment is enabled and the user clicks on the image. data contains the volume of the segmented region in mm3 and mL
+     * @example
+     * niivue.onClickToSegment = (data) => {
+     * console.log('clicked to segment')
+     * console.log('volume mm3: ', data.mm3)
+     * console.log('volume mL: ', data.mL)
+     * }
+     */
+    onClickToSegment: (data: {
+        mm3: number;
+        mL: number;
+    }) => void;
     /**
      * callback function to run when a new volume is loaded
      * @example
@@ -2004,6 +2090,7 @@ declare class Niivue {
      * @see {@link https://niivue.github.io/niivue/features/document.3d.html | live demo usage}
      */
     addVolumeFromUrl(imageOptions: ImageFromUrlOptions): Promise<NVImage>;
+    addVolumesFromUrl(imageOptionsArray: ImageFromUrlOptions[]): Promise<NVImage[]>;
     /**
      * Find media by url
      */
@@ -2201,6 +2288,15 @@ declare class Niivue {
      * @see {@link https://niivue.github.io/niivue/features/clipplanes.html | live demo usage}
      */
     indexNearestXYZmm(mesh: number, Xmm: number, Ymm: number, Zmm: number): number[];
+    /**
+     * reduce complexity of FreeSurfer mesh
+     * @param mesh - identity of mesh to change
+     * @param order - decimation order 0..6
+     * @example niivue.decimateHierarchicalMesh(niivue.meshes[0].id, 4)
+     * @returns boolean false if mesh is not hierarchical or of lower order
+     * @see {@link https://niivue.github.io/niivue/features/meshes.html | live demo usage}
+     */
+    decimateHierarchicalMesh(mesh: number, order?: number): boolean;
     /**
      * reverse triangle winding of mesh (swap front and back faces)
      * @param id - identity of mesh to change
@@ -2416,6 +2512,22 @@ declare class Niivue {
      */
     setClipPlaneColor(color: number[]): void;
     /**
+     * adjust thickness of the 3D clip plane
+     * @param thick - thickness of slab. Value 0..1.73 (cube opposite corner length is sqrt(3)).
+     * @example
+     * niivue.setClipPlaneThick(0.3) // thin slab
+     * @see {@link https://niivue.github.io/niivue/features/clipplanes.html | live demo usage}
+     */
+    setClipPlaneThick(thick: number): void;
+    /**
+     * set the clipping region for volume rendering
+     * @param color - the new color. expects an array of RGBA values. values can range from 0 to 1
+     * @example
+     * niivue.setClipPlaneColor([0.0, 0.0, 0.2], [1.0, 1.0, 0.7]) // remove inferior 20% and superior 30%
+     * @see {@link https://niivue.github.io/niivue/features/clipplanes.html | live demo usage}
+     */
+    setClipVolume(low: number[], high: number[]): void;
+    /**
      * set proportion of volume rendering influenced by selected matcap.
      * @param gradientAmount - amount of matcap (0..1), default 0 (matte, surface normal does not influence color)
      * @example
@@ -2501,6 +2613,11 @@ declare class Niivue {
      * @see {@link https://niivue.github.io/niivue/features/multiuser.meshes.html | live demo usage}
      */
     addMeshFromUrl(meshOptions: LoadFromUrlParams): Promise<NVMesh>;
+    /**
+     * Add mesh and notify subscribers
+     * @see {@link https://niivue.github.io/niivue/features/multiuser.meshes.html | live demo usage}
+     */
+    addMeshesFromUrl(meshOptions: LoadFromUrlParams[]): Promise<NVMesh[]>;
     /**
      * load an array of meshes
      * @param meshList - the array of objects to load. each object must have a resolvable "url" property at a minimum
@@ -2925,4 +3042,4 @@ declare class Niivue {
     set gl(gl: WebGL2RenderingContext | null);
 }
 
-export { type Connectome, type ConnectomeOptions, DEFAULT_OPTIONS, DRAG_MODE, type DocumentData, type DragReleaseParams, type ExportDocumentData, INITIAL_SCENE_DATA, LabelLineTerminator, LabelTextAlignment, type LegacyConnectome, type LegacyNodes, MULTIPLANAR_TYPE, type NVConfigOptions, type NVConnectomeEdge, type NVConnectomeNode, NVController, NVDocument, NVImage, NVImageFromUrlOptions, NVLabel3D, NVLabel3DStyle, NVMesh, NVMeshFromUrlOptions, NVMeshLayerDefaults, NVMeshLoaders, NVUtilities, type NiftiHeader, Niivue, type Point, SLICE_TYPE, type Scene, type Volume, cmapper, ColorTables as colortables };
+export { type Connectome, type ConnectomeOptions, DEFAULT_OPTIONS, DRAG_MODE, type DocumentData, type DragReleaseParams, type ExportDocumentData, INITIAL_SCENE_DATA, LabelLineTerminator, LabelTextAlignment, type LegacyConnectome, type LegacyNodes, MULTIPLANAR_TYPE, type NVConfigOptions, type NVConnectomeEdge, type NVConnectomeNode, NVController, NVDocument, NVImage, NVImageFromUrlOptions, NVLabel3D, NVLabel3DStyle, NVMesh, NVMeshFromUrlOptions, NVMeshLayerDefaults, NVMeshLoaders, NVMeshUtilities, NVUtilities, type NiftiHeader, type NiiVueLocation, type NiiVueLocationValue, Niivue, type Point, SHOW_RENDER, SLICE_TYPE, type Scene, type Volume, cmapper, ColorTables as colortables };
